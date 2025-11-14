@@ -14,12 +14,25 @@ contract SimpleArbitrage {
     address public sushiswapRouterAddress;
 
     uint256 public arbitrageAmount;
+    
+    // Reentrancy guard
+    bool private locked;
 
     enum Exchange {
         UNI,
         SUSHI,
         NONE
     }
+    
+    // Events
+    event Deposited(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event ArbitrageExecuted(
+        Exchange indexed exchange,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 profit
+    );
 
     constructor(
         address _uniswapRouterAddress,
@@ -38,53 +51,77 @@ contract SimpleArbitrage {
         require(msg.sender == owner, "only owner can call this");
         _;
     }
+    
+    modifier nonReentrant() {
+        require(!locked, "ReentrancyGuard: reentrant call");
+        locked = true;
+        _;
+        locked = false;
+    }
 
-    function deposit(uint256 amount) public onlyOwner {
+    function deposit(uint256 amount) public onlyOwner nonReentrant {
         require(amount > 0, "Deposit amount must be greater than 0");
-        IERC20(wethAddress).transferFrom(msg.sender, address(this), amount);
+        require(
+            IERC20(wethAddress).transferFrom(msg.sender, address(this), amount),
+            "Transfer failed"
+        );
         arbitrageAmount += amount;
+        emit Deposited(msg.sender, amount);
     }
 
-    function withdraw(uint256 amount) public onlyOwner {
+    function withdraw(uint256 amount) public onlyOwner nonReentrant {
+        require(amount > 0, "Withdraw amount must be greater than 0");
         require(amount <= arbitrageAmount, "Not enough amount deposited");
-        IERC20(wethAddress).transferFrom(address(this), msg.sender, amount);
         arbitrageAmount -= amount;
+        require(
+            IERC20(wethAddress).transfer(msg.sender, amount),
+            "Transfer failed"
+        );
+        emit Withdrawn(msg.sender, amount);
     }
 
-    function makeArbitrage() public {
+    function makeArbitrage() public onlyOwner nonReentrant {
+        require(arbitrageAmount > 0, "No funds available for arbitrage");
         uint256 amountIn = arbitrageAmount;
         Exchange result = _comparePrice(amountIn);
+        require(result != Exchange.NONE, "No arbitrage opportunity found");
+        
+        uint256 amountOut;
+        uint256 amountFinal;
+        
         if (result == Exchange.UNI) {
             // sell ETH in uniswap for DAI with high price and buy ETH from sushiswap with lower price
-            uint256 amountOut = _swap(
+            amountOut = _swap(
                 amountIn,
                 uniswapRouterAddress,
                 wethAddress,
                 daiAddress
             );
-            uint256 amountFinal = _swap(
+            amountFinal = _swap(
                 amountOut,
                 sushiswapRouterAddress,
                 daiAddress,
                 wethAddress
             );
-            arbitrageAmount = amountFinal;
-        } else if (result == Exchange.SUSHI) {
+        } else {
             // sell ETH in sushiswap for DAI with high price and buy ETH from uniswap with lower price
-            uint256 amountOut = _swap(
+            amountOut = _swap(
                 amountIn,
                 sushiswapRouterAddress,
                 wethAddress,
                 daiAddress
             );
-            uint256 amountFinal = _swap(
+            amountFinal = _swap(
                 amountOut,
                 uniswapRouterAddress,
                 daiAddress,
                 wethAddress
             );
-            arbitrageAmount = amountFinal;
         }
+        
+        uint256 profit = amountFinal > amountIn ? amountFinal - amountIn : 0;
+        arbitrageAmount = amountFinal;
+        emit ArbitrageExecuted(result, amountIn, amountFinal, profit);
     }
 
     function _swap(
@@ -162,20 +199,35 @@ contract SimpleArbitrage {
         uint256 higherPrice,
         uint256 lowerPrice
     ) internal pure returns (bool) {
-        // uniswap & sushiswap have 0.3% fee for every exchange
-        // so gain made must be greater than 2 * 0.3% * arbitrage_amount
-
-        // difference in ETH
-        uint256 difference = ((higherPrice - lowerPrice) * 10**18) /
-            higherPrice;
-
-        uint256 payed_fee = (2 * (amountIn * 3)) / 1000;
-
-        if (difference > payed_fee) {
-            return true;
-        } else {
+        // Uniswap & Sushiswap have 0.3% fee for every exchange
+        // higherPrice = DAI received for selling amountIn WETH (already includes 0.3% fee)
+        // lowerPrice = DAI received for selling amountIn WETH on other exchange (already includes 0.3% fee)
+        
+        require(higherPrice > lowerPrice, "Invalid price comparison");
+        
+        // Price difference ratio: how much more DAI we get from the higher price exchange
+        // This represents the arbitrage opportunity before fees
+        uint256 priceDifference = higherPrice - lowerPrice;
+        
+        // Calculate minimum required price difference to cover fees
+        // Each swap has 0.3% fee, so we lose 0.6% total
+        // We need the price difference to be at least 0.6% of the lower price to break even
+        // Plus a small buffer for gas and slippage
+        
+        // Minimum required difference: 0.6% of lowerPrice (to cover fees) + 0.1% buffer
+        uint256 minRequiredDifference = (lowerPrice * 7) / 1000; // 0.7% buffer
+        
+        // Check if price difference is sufficient
+        // Also ensure we get more WETH back than we put in
+        // The ratio higherPrice/lowerPrice should be > 1.006 (0.6% fees)
+        if (priceDifference < minRequiredDifference) {
             return false;
         }
+        
+        // Additional check: ensure the price ratio accounts for fees
+        // If higherPrice/lowerPrice > 1.006, arbitrage is profitable
+        // This is equivalent to: higherPrice * 1000 > lowerPrice * 1006
+        return (higherPrice * 1000) > (lowerPrice * 1006);
     }
 
     function _getPrice(
