@@ -1,6 +1,6 @@
 import pytest, brownie
 from brownie import config, network, SimpleArbitrage
-from scripts.helper_scripts import get_account, toWei, approve_erc20, FORKED_BLOCHCHAINS, ZERO_ADDRESS
+from scripts.helper_scripts import get_account, toWei, approve_erc20, FORKED_BLOCKCHAINS, ZERO_ADDRESS
 from scripts.get_weth import get_weth
 
 
@@ -76,7 +76,7 @@ def deploy_arbitrage():
     uni_router_address = config["networks"][network.show_active()]["uniswap-router"]
     sushi_router_address = config["networks"][network.show_active()]["sushiswap-router"]
 
-    if network.show_active() not in FORKED_BLOCHCHAINS:
+    if network.show_active() not in FORKED_BLOCKCHAINS:
         pytest.skip()
 
     owner = get_account()

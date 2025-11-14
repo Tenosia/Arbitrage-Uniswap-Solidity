@@ -4,12 +4,12 @@ from web3 import Web3
 
 LOCAL_BLOCKCHAINS = ["ganache-local", "development"]
 
-FORKED_BLOCHCHAINS = ["mainnet-fork", "mainnet-fork-dev"]
+FORKED_BLOCKCHAINS = ["mainnet-fork", "mainnet-fork-dev"]
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 def get_account(index=None):
-    if network.show_active() in LOCAL_BLOCKCHAINS or network.show_active() in FORKED_BLOCHCHAINS:
+    if network.show_active() in LOCAL_BLOCKCHAINS or network.show_active() in FORKED_BLOCKCHAINS:
         if index is not None:
             return accounts[index]
         else:

@@ -1,6 +1,6 @@
 import brownie
 from brownie import config, network, SimpleArbitrage
-from scripts.helper_scripts import get_account, toWei, fromWei, approve_erc20, FORKED_BLOCHCHAINS
+from scripts.helper_scripts import get_account, toWei, fromWei, approve_erc20, FORKED_BLOCKCHAINS
 from scripts.get_weth import get_weth
 
 
@@ -14,7 +14,7 @@ sushi_router_address = config["networks"][network.show_active()]["sushiswap-rout
 def main():
     account = get_account()
 
-    if network.show_active() in FORKED_BLOCHCHAINS:
+    if network.show_active() in FORKED_BLOCKCHAINS:
         get_weth(account, 10)
     
     arbitrage = SimpleArbitrage.deploy(
@@ -32,12 +32,23 @@ def main():
     deposit_tx = arbitrage.deposit(amount, {"from": account})
     deposit_tx.wait(1)
 
-    print("amount deposited: ", fromWei(arbitrage.arbitrageAmount()))
+    print(f"Amount deposited: {fromWei(arbitrage.arbitrageAmount())} WETH")
 
-    arbitrage_tx = arbitrage.makeArbitrage({"from": account})
-    arbitrage_tx.wait(1)
-    
-    print("New amount: ", fromWei(arbitrage.arbitrageAmount()))
+    try:
+        arbitrage_tx = arbitrage.makeArbitrage({"from": account})
+        arbitrage_tx.wait(1)
+        
+        print(f"New amount: {fromWei(arbitrage.arbitrageAmount())} WETH")
+        
+        # Calculate and display profit
+        profit = arbitrage.arbitrageAmount() - amount
+        if profit > 0:
+            print(f"✅ Arbitrage profitable! Profit: {fromWei(profit)} WETH")
+        else:
+            print("⚠️ No profit from arbitrage")
+    except Exception as e:
+        print(f"❌ Arbitrage failed: {str(e)}")
+        print("This usually means no profitable opportunity was found.")
     
     
     
